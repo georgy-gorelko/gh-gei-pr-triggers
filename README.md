@@ -61,6 +61,28 @@ Refer to the [official documentation](https://docs.github.com/en/migrations/usin
 
 Refer to the [official documentation](https://docs.github.com/en/migrations/using-github-enterprise-importer/migrating-repositories-with-github-enterprise-importer/migrating-repositories-from-azure-devops-to-github-enterprise-cloud) for more details.
 
+#### Pre-Migration: Analyzing Branch Policies
+Before running `gh ado2gh migrate-repo`, it's recommended to analyze existing Azure DevOps branch policies to identify potential migration concerns:
+
+>`gh ado2gh list-branch-policies --ado-org ORGNAME`
+
+This command will:
+- List all branch policies for repositories in your Azure DevOps organization
+- Provide a summary report grouped by policy type and count
+- Highlight policies that may require special attention during GitHub migration (e.g., Path-based branch protection, Work item linking, Build validation, Status checks)
+
+You can also scope the analysis to specific team projects or repositories:
+>`gh ado2gh list-branch-policies --ado-org ORGNAME --team-project PROJECTNAME --repo REPONAME`
+
+**CSV Export**: Export the results to CSV files for further analysis and reporting:
+>`gh ado2gh list-branch-policies --ado-org ORGNAME --csv-output branch-policies.csv`
+
+This will generate two files:
+- `branch-policies.csv` - Detailed list of all branch policies with migration concern indicators
+- `branch-policies-summary.csv` - Summary statistics and policy counts
+
+Some Azure DevOps branch policies don't have direct GitHub equivalents and may block PRs if status checks are enabled for them. This analysis helps you plan your migration strategy and prepare for policy reconfiguration in GitHub.
+
 ### Bitbucket Server and Data Center to GitHub Usage
 1. Create Personal Access Token for the target GitHub org (for more details on scopes needed refer to our [official documentation](https://docs.github.com/en/migrations/using-github-enterprise-importer/preparing-to-migrate-with-github-enterprise-importer/managing-access-for-github-enterprise-importer)).
 

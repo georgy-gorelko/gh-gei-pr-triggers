@@ -1571,4 +1571,156 @@ public class AdoApiTests
             .Should()
             .ThrowExactlyAsync<JsonReaderException>();
     }
+
+    [Fact]
+    public async Task GetBranchPolicies_Should_Return_Policies()
+    {
+        // Arrange
+        var repositoryId = "repo-123";
+        var expectedUrl = $"https://dev.azure.com/{ADO_ORG.EscapeDataString()}/{ADO_TEAM_PROJECT.EscapeDataString()}/_apis/policy/configurations?repositoryId={repositoryId.EscapeDataString()}&api-version=6.0";
+
+        var response = new
+        {
+            value = new object[]
+            {
+                new
+                {
+                    id = "policy-1",
+                    type = new
+                    {
+                        id = "fa4e907d-c16b-4a4c-9dfa-4906e5d171dd",
+                        displayName = "Minimum number of reviewers policy"
+                    },
+                    isEnabled = true,
+                    isBlocking = true,
+                    settings = new
+                    {
+                        minimumApproverCount = 2,
+                        creatorVoteCounts = false,
+                        allowDownvotes = true,
+                        resetOnSourcePush = true
+                    }
+                },
+                new
+                {
+                    id = "policy-2",
+                    type = new
+                    {
+                        id = "fd2167ab-b0be-447a-8ec8-39368250530e",
+                        displayName = "Comment resolution policy"
+                    },
+                    isEnabled = true,
+                    isBlocking = false,
+                    settings = new { }
+                }
+            }
+        };
+
+        _mockAdoClient.Setup(m => m.GetAsync(expectedUrl))
+                      .ReturnsAsync(JsonConvert.SerializeObject(response));
+
+        // Act
+        var result = await sut.GetBranchPolicies(ADO_ORG, ADO_TEAM_PROJECT, repositoryId);
+
+        // Assert
+        var policies = result.ToList();
+        policies.Should().HaveCount(2);
+
+        var policy1 = policies[0];
+        policy1.Id.Should().Be("policy-1");
+        policy1.Type.Should().Be("Minimum number of reviewers policy");
+        policy1.Name.Should().Be("Minimum number of reviewers");
+        policy1.IsEnabled.Should().BeTrue();
+        policy1.IsBlocking.Should().BeTrue();
+        policy1.Description.Should().Contain("Min reviewers: 2");
+
+        var policy2 = policies[1];
+        policy2.Id.Should().Be("policy-2");
+        policy2.Type.Should().Be("Comment resolution policy");
+        policy2.Name.Should().Be("Comment resolution");
+        policy2.IsEnabled.Should().BeTrue();
+        policy2.IsBlocking.Should().BeFalse();
+        policy2.Description.Should().Be("All comments must be resolved");
+    }
+
+    [Fact]
+    public async Task GetBranchPolicies_Should_Handle_Empty_Response()
+    {
+        // Arrange
+        var repositoryId = "repo-123";
+        var expectedUrl = $"https://dev.azure.com/{ADO_ORG.EscapeDataString()}/{ADO_TEAM_PROJECT.EscapeDataString()}/_apis/policy/configurations?repositoryId={repositoryId.EscapeDataString()}&api-version=6.0";
+
+        var response = new { value = Array.Empty<object>() };
+
+        _mockAdoClient.Setup(m => m.GetAsync(expectedUrl))
+                      .ReturnsAsync(JsonConvert.SerializeObject(response));
+
+        // Act
+        var result = await sut.GetBranchPolicies(ADO_ORG, ADO_TEAM_PROJECT, repositoryId);
+
+        // Assert
+        result.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task GetAllBranchPolicies_Should_Call_GetBranchPolicies_For_Each_Repo()
+    {
+        // Arrange
+        var repoJsonData = new[]
+        {
+            new { id = "repo-1", name = "Repository 1", size = "1000", isDisabled = "false" },
+            new { id = "repo-2", name = "Repository 2", size = "2000", isDisabled = "false" }
+        };
+
+        // Mock GetRepos to return our test repos
+        var expectedReposUrl = $"https://dev.azure.com/{ADO_ORG.EscapeDataString()}/{ADO_TEAM_PROJECT.EscapeDataString()}/_apis/git/repositories?api-version=6.1-preview.1";
+        _mockAdoClient.Setup(m => m.GetWithPagingAsync(expectedReposUrl))
+                      .ReturnsAsync(JArray.FromObject(repoJsonData));
+
+        _mockAdoClient.Setup(m => m.GetAsync(It.Is<string>(url => url.Contains("repo-1"))))
+                      .ReturnsAsync(JsonConvert.SerializeObject(new { value = new[] { new { id = "policy-1", type = new { id = "type1", displayName = "Policy 1" }, isEnabled = true, isBlocking = true, settings = new { } } } }));
+
+        _mockAdoClient.Setup(m => m.GetAsync(It.Is<string>(url => url.Contains("repo-2"))))
+                      .ReturnsAsync(JsonConvert.SerializeObject(new { value = new[] { new { id = "policy-2", type = new { id = "type2", displayName = "Policy 2" }, isEnabled = false, isBlocking = false, settings = new { } } } }));
+
+        // Act
+        var result = await sut.GetAllBranchPolicies(ADO_ORG, ADO_TEAM_PROJECT);
+
+        // Assert
+        var allPolicies = result.ToList();
+        allPolicies.Should().HaveCount(2);
+        allPolicies.Should().Contain(p => p.Id == "policy-1");
+        allPolicies.Should().Contain(p => p.Id == "policy-2");
+    }
+
+    [Fact]
+    public async Task GetAllBranchPolicies_Should_Skip_Disabled_Repositories()
+    {
+        // Arrange
+        var repoJsonData = new[]
+        {
+            new { id = "repo-1", name = "Repository 1", size = "1000", isDisabled = "false" },
+            new { id = "repo-2", name = "Repository 2", size = "2000", isDisabled = "true" }  // This repo is disabled
+        };
+
+        // Mock GetRepos to return our test repos (including disabled one)
+        var expectedReposUrl = $"https://dev.azure.com/{ADO_ORG.EscapeDataString()}/{ADO_TEAM_PROJECT.EscapeDataString()}/_apis/git/repositories?api-version=6.1-preview.1";
+        _mockAdoClient.Setup(m => m.GetWithPagingAsync(expectedReposUrl))
+                      .ReturnsAsync(JArray.FromObject(repoJsonData));
+
+        // Only set up policy call for enabled repo
+        _mockAdoClient.Setup(m => m.GetAsync(It.Is<string>(url => url.Contains("repo-1"))))
+                      .ReturnsAsync(JsonConvert.SerializeObject(new { value = new[] { new { id = "policy-1", type = new { id = "type1", displayName = "Policy 1" }, isEnabled = true, isBlocking = true, settings = new { } } } }));
+
+        // Act
+        var result = await sut.GetAllBranchPolicies(ADO_ORG, ADO_TEAM_PROJECT);
+
+        // Assert
+        var allPolicies = result.ToList();
+        allPolicies.Should().HaveCount(1);
+        allPolicies.Should().Contain(p => p.Id == "policy-1");
+        
+        // Verify that GetBranchPolicies was not called for the disabled repository
+        _mockAdoClient.Verify(m => m.GetAsync(It.Is<string>(url => url.Contains("repo-2"))), Times.Never);
+    }
 }

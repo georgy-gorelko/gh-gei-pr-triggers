@@ -9,6 +9,7 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 
 using OctoshiftCLI.AdoToGithub.Factories;
+using OctoshiftCLI.AdoToGithub.Services;
 using OctoshiftCLI.Contracts;
 using OctoshiftCLI.Extensions;
 using OctoshiftCLI.Factories;
@@ -41,6 +42,8 @@ namespace OctoshiftCLI.AdoToGithub
                 .AddSingleton<TeamProjectsCsvGeneratorService>()
                 .AddSingleton<ReposCsvGeneratorService>()
                 .AddSingleton<PipelinesCsvGeneratorService>()
+                .AddSingleton<BranchPoliciesCsvGeneratorService>()
+                .AddSingleton<StatusChecksCsvGeneratorService>()
                 .AddSingleton<AdoInspectorService>()
                 .AddSingleton<AdoInspectorServiceFactory>()
                 .AddSingleton<DateTimeProvider>()

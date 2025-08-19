@@ -782,4 +782,127 @@ public class AdoApi
         var response = await _client.GetAsync($"{_adoBaseUrl}/{org.EscapeDataString()}/_apis/permissions/{securityNamespaceId.EscapeDataString()}/{permission}?api-version=6.0");
         return ((string)JObject.Parse(response)["value"]?.FirstOrDefault()).ToBool();
     }
+
+    public virtual async Task<IEnumerable<(string Id, string Type, string Name, string Description, bool IsEnabled, bool IsBlocking, JObject Settings)>> GetBranchPolicies(string org, string teamProject, string repositoryId)
+    {
+        var url = $"{_adoBaseUrl}/{org.EscapeDataString()}/{teamProject.EscapeDataString()}/_apis/policy/configurations?repositoryId={repositoryId.EscapeDataString()}&api-version=6.0";
+        var response = await _client.GetAsync(url);
+        var data = JObject.Parse(response);
+
+        var policies = new List<(string Id, string Type, string Name, string Description, bool IsEnabled, bool IsBlocking, JObject Settings)>();
+
+        if (data.TryGetValue("value", out var value) && value is JArray policyArray)
+        {
+            foreach (var policy in policyArray)
+            {
+                var id = (string)policy["id"];
+                var type = (string)policy["type"]["displayName"];
+                var typeId = (string)policy["type"]["id"];
+                var isEnabled = (bool)policy["isEnabled"];
+                var isBlocking = (bool)policy["isBlocking"];
+                var settings = (JObject)policy["settings"];
+
+                // Get more readable policy names
+                var policyName = GetPolicyFriendlyName(typeId, type);
+                var policyDescription = GetPolicyDescription(typeId, settings);
+
+                policies.Add((id, type, policyName, policyDescription, isEnabled, isBlocking, settings));
+            }
+        }
+
+        return policies;
+    }
+
+    public virtual async Task<IEnumerable<(string Id, string Type, string Name, string Description, bool IsEnabled, bool IsBlocking, JObject Settings)>> GetAllBranchPolicies(string org, string teamProject)
+    {
+        var allPolicies = new List<(string Id, string Type, string Name, string Description, bool IsEnabled, bool IsBlocking, JObject Settings)>();
+        var repos = await GetEnabledRepos(org, teamProject);
+
+        foreach (var repo in repos)
+        {
+            try
+            {
+                var policies = await GetBranchPolicies(org, teamProject, repo.Id);
+                allPolicies.AddRange(policies);
+            }
+            catch (HttpRequestException ex)
+            {
+                _log.LogWarning($"Failed to get branch policies for repository {repo.Name}: {ex.Message}");
+            }
+            catch (TaskCanceledException ex)
+            {
+                _log.LogWarning($"Request timeout getting branch policies for repository {repo.Name}: {ex.Message}");
+            }
+        }
+
+        return allPolicies;
+    }
+
+    private static string GetPolicyFriendlyName(string typeId, string originalName)
+    {
+        return typeId.ToUpperInvariant() switch
+        {
+            "FA4E907D-C16B-4A4C-9DFA-4906E5D171DD" => "Minimum number of reviewers",
+            "C6A1889D-B943-4856-B76F-9E46BB6B0DF2" => "Required reviewers",
+            "FD2167AB-B0BE-447A-8EC8-39368250530E" => "Comment resolution",
+            "0609B952-1397-4640-95EC-E00A01B2C241" => "Work item linking",
+            "40E92B44-2FE1-4DD6-B3D8-74A9C21D0C6E" => "Path-based branch protection",
+            _ when typeId.ToUpperInvariant().Contains("BUILD") => "Build validation",
+            _ when typeId.ToUpperInvariant().Contains("STATUS") => "Status check",
+            _ => originalName ?? typeId
+        };
+    }
+
+    private static string GetPolicyDescription(string typeId, JObject settings)
+    {
+        return settings == null ? "" : typeId.ToUpperInvariant() switch
+        {
+            "FA4E907D-C16B-4A4C-9DFA-4906E5D171DD" => GetMinimumReviewersDescription(settings),
+            "C6A1889D-B943-4856-B76F-9E46BB6B0DF2" => GetRequiredReviewersDescription(settings),
+            "FD2167AB-B0BE-447A-8EC8-39368250530E" => "All comments must be resolved",
+            "0609B952-1397-4640-95EC-E00A01B2C241" => "Work items must be linked",
+            "40E92B44-2FE1-4DD6-B3D8-74A9C21D0C6E" => GetPathBasedDescription(settings),
+            _ when typeId.ToUpperInvariant().Contains("BUILD") => GetBuildValidationDescription(settings),
+            _ when typeId.ToUpperInvariant().Contains("STATUS") => GetStatusCheckDescription(settings),
+            _ => ""
+        };
+    }
+
+    private static string GetMinimumReviewersDescription(JObject settings)
+    {
+        var minimumApproverCount = (int?)settings["minimumApproverCount"] ?? 0;
+        var creatorVoteCounts = (bool?)settings["creatorVoteCounts"] ?? false;
+        var allowDownvotes = (bool?)settings["allowDownvotes"] ?? false;
+        var resetOnSourcePush = (bool?)settings["resetOnSourcePush"] ?? false;
+
+        return $"Min reviewers: {minimumApproverCount}, Creator can approve: {creatorVoteCounts}, Allow downvotes: {allowDownvotes}, Reset on push: {resetOnSourcePush}";
+    }
+
+    private static string GetRequiredReviewersDescription(JObject settings)
+    {
+        var requiredReviewers = settings["requiredReviewers"] as JArray;
+        var count = requiredReviewers?.Count ?? 0;
+        return $"Required reviewers count: {count}";
+    }
+
+    private static string GetPathBasedDescription(JObject settings)
+    {
+        var filenamePatterns = settings["filenamePatterns"] as JArray;
+        var patterns = filenamePatterns?.Count ?? 0;
+        return $"Protected paths: {patterns} pattern(s)";
+    }
+
+    private static string GetBuildValidationDescription(JObject settings)
+    {
+        var buildDefinitionId = (int?)settings["buildDefinitionId"];
+        var displayName = (string)settings["displayName"];
+        return $"Build: {displayName ?? $"ID {buildDefinitionId}"}";
+    }
+
+    private static string GetStatusCheckDescription(JObject settings)
+    {
+        var statusName = (string)settings["statusName"];
+        var statusGenre = (string)settings["statusGenre"];
+        return $"Status: {statusName} ({statusGenre})";
+    }
 }
